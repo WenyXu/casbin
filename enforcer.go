@@ -17,7 +17,6 @@ package casbin
 import (
 	"errors"
 	"fmt"
-
 	"github.com/Knetic/govaluate"
 	"github.com/casbin/casbin/v2/effect"
 	"github.com/casbin/casbin/v2/log"
@@ -27,6 +26,7 @@ import (
 	"github.com/casbin/casbin/v2/rbac"
 	defaultrolemanager "github.com/casbin/casbin/v2/rbac/default-role-manager"
 	"github.com/casbin/casbin/v2/util"
+	"sync"
 )
 
 // Enforcer is the main interface for authorization enforcement and policy management.
@@ -624,13 +624,33 @@ func (e *Enforcer) EnforceExWithMatcher(matcher string, rvals ...interface{}) (b
 
 // BatchEnforce enforce in batches
 func (e *Enforcer) BatchEnforce(requests [][]interface{}) ([]bool, error) {
-	var results []bool
-	for _, request := range requests {
-		result, err := e.enforce("", nil, request...)
-		if err != nil {
-			return results, err
-		}
-		results = append(results, result)
+	var results =make([]bool,len(requests))
+	var mu sync.RWMutex
+	var mu1 sync.Mutex
+	var errArr []error
+	var wg sync.WaitGroup
+
+	for index, request := range requests {
+		wg.Add(1)
+		go func(index int,request []interface{}) {
+			defer wg.Done()
+			mu.RLock()
+			result, err := e.enforce("", nil, request...)
+			mu.RLocker()
+			if err != nil{
+				mu1.Lock()
+				errArr = append(errArr, err)
+				mu1.Unlock()
+				//return results, err
+			}
+			results[index]=result
+			//results = append(results, result)
+		}(index,request)
+	}
+	wg.Wait()
+
+	if len(errArr)!=0{
+		return nil,fmt.Errorf("%s \n",errArr)
 	}
 	return results, nil
 }
